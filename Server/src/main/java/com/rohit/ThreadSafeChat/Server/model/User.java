@@ -5,10 +5,20 @@ import java.io.ObjectOutputStream;
 public class User {
     private String userId;
     private ObjectOutputStream objectOutputStream;
+    private boolean isLoggedIn;
 
-    public User(String userId, ObjectOutputStream objectOutputStream) {
+    public User(String userId, ObjectOutputStream objectOutputStream, boolean isLoggedIn) {
         this.userId = userId;
         this.objectOutputStream = objectOutputStream;
+        this.isLoggedIn = isLoggedIn;
+    }
+
+    public boolean getIsLoggedIn() {
+        return isLoggedIn;
+    }
+
+    public void setIsLoggedIn(boolean value) {
+        this.isLoggedIn = value;
     }
 
     public String getUserId() {

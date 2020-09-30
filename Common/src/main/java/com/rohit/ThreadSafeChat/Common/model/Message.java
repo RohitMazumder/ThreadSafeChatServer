@@ -7,12 +7,18 @@ public class Message implements Serializable {
     private String text;
     private String senderId, receiverId;
     private MessageType messageType;
+    private Status status;
+
+    public Message() {
+
+    }
 
     private Message(Builder builder) {
         this.text = builder.text;
         this.senderId = builder.senderId;
         this.receiverId = builder.receiverId;
         this.messageType = builder.messageType;
+        this.status = builder.status;
     }
 
     public String getText() {
@@ -31,15 +37,40 @@ public class Message implements Serializable {
         return messageType;
     }
 
+    public Status getStatus() {
+        return status;
+    }
+
+    public void setText(String text) {
+        this.text = text;
+    }
+
+    public void setSenderId(String senderId) {
+        this.senderId = senderId;
+    }
+
+    public void setReceiverId(String receiverId) {
+        this.receiverId = receiverId;
+    }
+
+    public void setMessageType(MessageType messageType) {
+        this.messageType = messageType;
+    }
+
+    public void setStatus(Status status) {
+        this.status = status;
+    }
+
     @Override
     public String toString() {
-        return this.senderId + " --> " + this.receiverId + " : " + this.text;
+        return this.senderId + " : " + this.text;
     }
 
     public static class Builder {
         public MessageType messageType;
         private String text;
         private String senderId, receiverId;
+        private Status status;
 
         public Builder withText(String text) {
             this.text = text;
@@ -58,6 +89,11 @@ public class Message implements Serializable {
 
         public Builder withMessageType(MessageType messageType) {
             this.messageType = messageType;
+            return this;
+        }
+
+        public Builder withStatus(Status status) {
+            this.status = status;
             return this;
         }
 

@@ -6,7 +6,6 @@ import java.net.ServerSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.rohit.ThreadSafeChat.Server.model.Database;
 import com.rohit.ThreadSafeChat.Server.listener.ServerListener;
 
 public class Server {
@@ -18,15 +17,13 @@ public class Server {
         int port = Integer.parseInt(args[0]);
         ServerSocket serverSocket = new ServerSocket(port);
         logger.info("Server Socket established successfully!");
-        Database database = new Database();
 
         try {
             while (true) {
-                new Thread(new ServerListener(serverSocket.accept(), database)).start();
+                new Thread(new ServerListener(serverSocket.accept())).start();
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
-            ;
         } finally {
             serverSocket.close();
         }
