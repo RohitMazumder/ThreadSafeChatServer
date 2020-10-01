@@ -7,10 +7,10 @@ public class User {
     private ObjectOutputStream objectOutputStream;
     private boolean isLoggedIn;
 
-    public User(String userId, ObjectOutputStream objectOutputStream, boolean isLoggedIn) {
+    public User(String userId, ObjectOutputStream objectOutputStream) {
         this.userId = userId;
         this.objectOutputStream = objectOutputStream;
-        this.isLoggedIn = isLoggedIn;
+        this.isLoggedIn = false;
     }
 
     public boolean getIsLoggedIn() {

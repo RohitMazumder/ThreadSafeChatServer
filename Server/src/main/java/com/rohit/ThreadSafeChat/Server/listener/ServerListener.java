@@ -28,11 +28,11 @@ import com.rohit.ThreadSafeChat.Common.model.Status;
  * @author Rohit Mazumder (mazumder.rohit7@gmail.com)
  */
 public class ServerListener implements Runnable {
-    private static Map<String, User> users = new HashMap<>();
-    private static BlockingQueue<User> waitingQueue = new ArrayBlockingQueue<User>(Constants.MAX_USERS_SUPPORTED);
-    private static volatile int numberOfloggedInUsers = 0;
-    private static Logger logger = LoggerFactory.getLogger(ServerListener.class);
     private static final ReentrantReadWriteLock LOCK = new ReentrantReadWriteLock();
+    private static Map<String, User> registeredUsers = new HashMap<>();
+    private static BlockingQueue<User> waitingQueue = new ArrayBlockingQueue<User>(Constants.MAX_USERS_SUPPORTED);
+    private static volatile int numberOfLoggedInUsers = 0;
+    private static Logger logger = LoggerFactory.getLogger(ServerListener.class);
 
     private Socket socket;
     private ObjectInputStream objectInputStream;
@@ -45,7 +45,7 @@ public class ServerListener implements Runnable {
         this.socket = socket;
         this.isConnected = false;
     }
-
+ 
     public void run() {
         try {
             initialiseSocketStreams();
@@ -84,6 +84,9 @@ public class ServerListener implements Runnable {
 
     private void processMessage(Message message) throws InvalidRequestMessageException {
         switch (message.getMessageType()) {
+        case USER_REGISTRATION_REQUEST:
+        	processUserRegistrationRequest(message);
+        	break;
         case USER_LOGIN_REQUEST:
             processLoginRequest(message);
             break;
@@ -91,138 +94,163 @@ public class ServerListener implements Runnable {
             processLogoffRequest(message);
             break;
         case SEND_TEXT_REQUEST:
-            processSendTextRequest(message);
+        	processSendTextRequest(message);
             break;
         default:
             throw new InvalidRequestMessageException();
         }
     }
 
-    private void processLoginRequest(Message message) {
-        Message loginResponse = login(message.getSenderId());
-        broadcastMessageToObjectOutputStream(loginResponse, this.objectOutputStream);
-    }
+    private void processUserRegistrationRequest(Message message) {
+		String userId = message.getSenderId();
+   		Message registrationResponse = new Message();
+		registrationResponse.setMessageType(MessageType.REGISTRATION_RESPONSE);
+		registrationResponse.setReceiverId(userId);
 
-    private Message login(String username) {
+    	LOCK.writeLock().lock();
+    	try{
+    		if(registeredUsers.containsKey(userId)){
+    			registrationResponse.setText(String.format(ResponseMessages.USER_ALREADY_REGISTERED, userId));
+    			registrationResponse.setStatus(Status.INVALID_REQUEST);
+    		} else {
+	    		User newUser = new User(userId, this.objectOutputStream);
+	    		registeredUsers.put(userId, newUser);
+	    		registrationResponse.setStatus(Status.OK);
+	    		registrationResponse.setText(String.format(ResponseMessages.REGISTRATION_SUCCESSFUL, userId));
+    		}
+    	} finally {
+    		LOCK.writeLock().unlock();
+    		broadcastMessageToObjectOutputStream(registrationResponse, this.objectOutputStream);
+    	}
+	}
+
+	private void processLoginRequest(Message message) {
+		String userId = message.getSenderId();
         Message loginResponse = new Message();
         loginResponse.setMessageType(MessageType.LOGIN_RESPONSE);
-        loginResponse.setReceiverId(username);
+        loginResponse.setReceiverId(userId);
+	 
+    	LOCK.writeLock().lock();
+    	try{
+    		if(!registeredUsers.containsKey(userId)){
+    			loginResponse.setText(String.format(ResponseMessages.USER_ID_NOT_REGISTERED, userId));
+    			loginResponse.setStatus(Status.INVALID_REQUEST);
+    		} else if (numberOfLoggedInUsers == Constants.MAX_USERS_SUPPORTED) {
+       			loginResponse.setText(String.format(ResponseMessages.LOGIN_REQUEST_QUEUED, userId));
+    			loginResponse.setStatus(Status.REQUEST_QUEUED);
+    		} else if (registeredUsers.get(userId).getIsLoggedIn()){
+      			loginResponse.setText(String.format(ResponseMessages.DUPLICATE_LOGIN_REQUEST, userId));
+    			loginResponse.setStatus(Status.INVALID_REQUEST);
+    		} else {
+    			loginResponse = loginRegisteredUser(userId, this.objectOutputStream);
+    		}   		
+    	} finally {
+    		LOCK.writeLock().unlock();
+    		broadcastMessageToObjectOutputStream(loginResponse, this.objectOutputStream);
+    	}
+    }
 
-        LOCK.writeLock().lock();
-        try {
-            User user = users.get(username);
-            if (user == null && numberOfloggedInUsers == Constants.MAX_USERS_SUPPORTED) {
-                waitingQueue.offer(new User(username, objectOutputStream, false));
-                loginResponse.setStatus(Status.REQUEST_QUEUED);
-                loginResponse.setText(String.format(ResponseMessages.LOGIN_REQUEST_QUEUED, username));
-                return loginResponse;
-            } else if (user == null) {
-                users.put(username, new User(username, objectOutputStream, true));
-                numberOfloggedInUsers++;
-                loginResponse.setStatus(Status.OK);
-                loginResponse.setText(String.format(ResponseMessages.LOGIN_SUCCESSFUL, username));
-                return loginResponse;
-            } else if (user.getIsLoggedIn()) {
-                loginResponse.setStatus(Status.INVALID_REQUEST);
-                loginResponse.setText(String.format(ResponseMessages.DUPLICATE_LOGIN_REQUEST, username));
-                return loginResponse;
-            } else {
-                user.setIsLoggedIn(true);
-                numberOfloggedInUsers++;
-                loginResponse.setStatus(Status.OK);
-                loginResponse.setText(String.format(ResponseMessages.LOGIN_SUCCESSFUL, username));
-                return loginResponse;
-            }
-        } finally {
+    private Message loginRegisteredUser(String userId, ObjectOutputStream objectOutputStream) {
+        Message loginResponse = new Message();
+        loginResponse.setMessageType(MessageType.LOGIN_RESPONSE);
+        loginResponse.setReceiverId(userId);
+        
+    	LOCK.writeLock().lock();
+    	try{
+    		
+    		numberOfLoggedInUsers++;
+    		User newLoggedInUser = new User(userId, objectOutputStream);
+    		newLoggedInUser.setIsLoggedIn(true);
+    		registeredUsers.put(userId, newLoggedInUser);
+			loginResponse.setStatus(Status.OK);
+			loginResponse.setText(String.format(ResponseMessages.LOGIN_SUCCESSFUL, userId));
+			return loginResponse;
+    	} finally {
             LOCK.writeLock().unlock();
         }
     }
 
     private void processSendTextRequest(Message message) {
-        Message sendTextResponse = sendText(message);
-        broadcastMessageToObjectOutputStream(sendTextResponse, this.objectOutputStream);
-    }
-
-    public Message sendText(Message message) {
         Message sendTextResponse = new Message();
         sendTextResponse.setMessageType(MessageType.SEND_TEXT_RESPONSE);
         sendTextResponse.setReceiverId(message.getSenderId());
 
         LOCK.readLock().lock();
         try {
-            User receiver = users.get(message.getReceiverId());
+            User receiver = registeredUsers.get(message.getReceiverId());
             if (receiver == null) {
                 sendTextResponse.setStatus(Status.INVALID_REQUEST);
                 sendTextResponse
-                        .setText(String.format(ResponseMessages.USER_ID_DOES_NOT_EXIST, message.getReceiverId()));
-                return sendTextResponse;
+                        .setText(String.format(ResponseMessages.USER_ID_NOT_REGISTERED, message.getReceiverId()));
             } else if (!receiver.getIsLoggedIn()) {
                 sendTextResponse.setStatus(Status.INVALID_REQUEST);
                 sendTextResponse
                         .setText(String.format(ResponseMessages.USER_ID_NOT_LOGGED_IN, message.getReceiverId()));
-                return sendTextResponse;
+            } else {
+            	message.setMessageType(MessageType.RECEIVE_TEXT);
+	            broadcastMessageToObjectOutputStream(message, receiver.getObjectOutputStream());
+	            
+	            sendTextResponse.setStatus(Status.OK);
+	            sendTextResponse.setText(String.format(ResponseMessages.TEXT_SENT_SUCCESSFUL, message.getReceiverId()));
             }
-            message.setMessageType(MessageType.RECEIVE_TEXT);
-            broadcastMessageToObjectOutputStream(message, receiver.getObjectOutputStream());
-            sendTextResponse.setStatus(Status.OK);
-            sendTextResponse.setText(String.format(ResponseMessages.TEXT_SENT_SUCCESSFUL, message.getReceiverId()));
-            return sendTextResponse;
-        } finally {
+    	} finally {
             LOCK.readLock().unlock();
+    		broadcastMessageToObjectOutputStream(sendTextResponse, this.objectOutputStream);
         }
     }
 
-    private void processLogoffRequest(Message message) {
-        Message loginResponse = logoff(message.getSenderId());
-        broadcastMessageToObjectOutputStream(loginResponse, this.objectOutputStream);
-    }
-
-    public Message logoff(String username) {
+    private void processLogoffRequest(Message logoffRequest) {
+    	String userId = logoffRequest.getSenderId();
         Message logoffResponse = new Message();
         logoffResponse.setMessageType(MessageType.LOGOFF_RESPONSE);
-        logoffResponse.setReceiverId(username);
+        logoffResponse.setReceiverId(userId);
 
         LOCK.writeLock().lock();
         try {
-            User user = users.get(username);
+            User user = registeredUsers.get(userId);
             if (user == null) {
                 logoffResponse.setStatus(Status.INVALID_REQUEST);
-                logoffResponse.setText(String.format(ResponseMessages.USER_ID_DOES_NOT_EXIST, username));
-                return logoffResponse;
+                logoffResponse.setText(String.format(ResponseMessages.USER_ID_NOT_REGISTERED, userId));
             } else if (!user.getIsLoggedIn()) {
                 logoffResponse.setStatus(Status.INVALID_REQUEST);
-                logoffResponse.setText(String.format(ResponseMessages.USER_ID_NOT_LOGGED_IN, username));
-                return logoffResponse;
+                logoffResponse.setText(String.format(ResponseMessages.USER_ID_NOT_LOGGED_IN, userId));
+            } else {
+	            logoffRegisteredUser(user);
+	            
+	            logoffResponse.setStatus(Status.OK);
+	            logoffResponse.setText(String.format(ResponseMessages.LOGOFF_SUCCESSFUL, userId));
+	            
+	            loginWaitingUser();
             }
-            user.setIsLoggedIn(false);
-            numberOfloggedInUsers--;
-            logoffResponse.setStatus(Status.OK);
-            logoffResponse.setText(String.format(ResponseMessages.LOGOFF_SUCCESSFUL, username));
-            loginWaitingUser();
-            return logoffResponse;
         } finally {
             LOCK.writeLock().unlock();
+    		broadcastMessageToObjectOutputStream(logoffResponse, this.objectOutputStream);
         }
     }
 
-    private void loginWaitingUser() {
+    private void logoffRegisteredUser(User user) {
+    	LOCK.writeLock().lock();
+    	try{
+    		 user.setIsLoggedIn(false);
+             numberOfLoggedInUsers--;
+    	} finally {
+    		LOCK.writeLock().unlock();
+    	}
+	}
+
+	private void loginWaitingUser() {
+		Message loginResponse = new Message();
+		User waitingUser = null;
+		
         LOCK.writeLock().lock();
         try {
-            User waitingUser = waitingQueue.poll();
-            if (waitingUser == null)
-                return;
-
-            Message loginResponse = new Message();
-            loginResponse.setMessageType(MessageType.LOGIN_RESPONSE);
-            loginResponse.setStatus(Status.OK);
-            loginResponse.setText(String.format(ResponseMessages.LOGIN_SUCCESSFUL, waitingUser.getUserId()));
-            loginResponse.setReceiverId(waitingUser.getUserId());
-            waitingUser.setIsLoggedIn(true);
-            users.put(waitingUser.getUserId(), waitingUser);
-            numberOfloggedInUsers++;
-            broadcastMessageToObjectOutputStream(loginResponse, waitingUser.getObjectOutputStream());
+            waitingUser = waitingQueue.poll();
+            if (waitingUser == null) return;
+            loginResponse = loginRegisteredUser(waitingUser.getUserId(), waitingUser.getObjectOutputStream());
         } finally {
             LOCK.writeLock().unlock();
+            if(waitingUser != null)
+            	broadcastMessageToObjectOutputStream(loginResponse, waitingUser.getObjectOutputStream());
         }
     }
 
@@ -237,7 +265,8 @@ public class ServerListener implements Runnable {
     private void closeConnection() {
         LOCK.writeLock().lock();
         try {
-            removeUserFromDatabaseIfNotNull();
+            removeUserFromDatabaseIfPresent();
+            removeUserFromWaitingQueueIfPresent();
             closeObjectInputStreamIfNotNull();
             closeObjectOutputStreamIfNotNull();
         } catch (IOException e) {
@@ -257,18 +286,30 @@ public class ServerListener implements Runnable {
             this.objectInputStream.close();
     }
 
-    private void removeUserFromDatabaseIfNotNull() {
+    private void removeUserFromDatabaseIfPresent() {
+    	if(userId == null) return;
         LOCK.writeLock().lock();
         try {
-            if (userId != null) {
-                User toBeRemovedUser = users.get(userId);
-                if (toBeRemovedUser.getIsLoggedIn())
-                    numberOfloggedInUsers--;
-                users.remove(userId);
+            User toBeRemovedUser = registeredUsers.get(userId);
+            if (toBeRemovedUser.getIsLoggedIn())
+                numberOfLoggedInUsers--;
+            registeredUsers.remove(userId);
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+    }
+    
+    private void removeUserFromWaitingQueueIfPresent() {
+    	if(userId == null) return;
+        LOCK.writeLock().lock();
+        try {
+            for(User user: waitingQueue){
+            	if(user.getUserId().equals(userId)){
+            		waitingQueue.remove(user);
+            	}
             }
         } finally {
             LOCK.writeLock().unlock();
         }
     }
-
 }

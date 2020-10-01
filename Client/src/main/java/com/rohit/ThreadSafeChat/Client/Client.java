@@ -23,15 +23,15 @@ import com.rohit.ThreadSafeChat.Common.model.MessageType;
  * @author Rohit Mazumder.(mazumder.rohit7@gmail.com)
  */
 public class Client {
+    private static final Logger LOGGER = LoggerFactory.getLogger(Client.class);
+    private static final BufferedReader BUFFERED_READER = new BufferedReader(new InputStreamReader(System.in));
+
     private static Socket socket;
     private static ObjectOutputStream objectOutputStream;
     private static ObjectInputStream objectInputStream;
     private static Phaser phaser;
 
     private static ClientState clientState;
-
-    private static Logger logger = LoggerFactory.getLogger(Client.class);
-    private static BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(System.in));
 
     public static void main(String[] args) throws IOException {
         if (args.length != 2)
@@ -56,18 +56,21 @@ public class Client {
 
     private static void listenToUserInput() {
         try {
-            String input = bufferedReader.readLine();
+            String input = BUFFERED_READER.readLine();
             if (input != null)
                 processInput(input);
         } catch (IOException e) {
-            logger.error(e.getMessage(), e);
+            LOGGER.error(e.getMessage(), e);
         }
     }
 
     private static void processInput(String input) throws IOException {
         if (input != null) {
             String[] args = input.split("\\s+");
-            if (args[0].equals("login")) {
+            if(args[0].equals("register")) {
+            	if(args.length != 2) throw new IOException(ErrorMessages.INVALID_REGISTER_ARGS);
+            	registerUser(args[1]);
+            } else if (args[0].equals("login")) {
                 if (args.length != 2)
                     throw new IOException(ErrorMessages.INVALID_LOGIN_ARGS);
                 loginToServer(args[1]);
@@ -84,100 +87,111 @@ public class Client {
         }
     }
 
-    private static void connectToServerSocket(String hostname, int port) {
+    private static void registerUser(String username) {
+    	if (!clientState.getIsConnected()) {
+            LOGGER.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
+            return;
+        }
+        if (clientState.getIsLoggedIn()) {
+            LOGGER.info(ErrorMessages.ALREADY_LOGGED_IN);
+            return;
+        }
+        if (clientState.getIsInLoginQueue()) {
+            LOGGER.error(ErrorMessages.IN_LOGIN_QUEUE);
+            return;
+        }
+        
+        Message registrationRequest = new Message.Builder().withMessageType(MessageType.USER_REGISTRATION_REQUEST)
+                .withSenderId(username).build();
+        sendRequestToServer(registrationRequest);
+	}
+
+	private static void connectToServerSocket(String hostname, int port) {
         if (clientState.getIsConnected()) {
-            logger.info(ErrorMessages.ALREADY_CONNECTED_TO_SERVER);
+            LOGGER.info(ErrorMessages.ALREADY_CONNECTED_TO_SERVER);
             return;
         }
 
-        logger.info("Attempting to connect to server socket ...");
+        LOGGER.info("Attempting to connect to server socket ...");
         try {
             socket = new Socket(hostname, port);
             objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
             objectInputStream = new ObjectInputStream(socket.getInputStream());
             clientState.setIsConnected(true);
             (new Thread(new ClientListener(phaser, objectInputStream, clientState))).start();
-            logger.info("Connected successfully to server socket !");
+            LOGGER.info("Connected successfully to server socket !");
         } catch (IOException e) {
-            logger.error(ErrorMessages.FAILED_TO_CONNECT_TO_SERVER, e);
+            LOGGER.error(ErrorMessages.FAILED_TO_CONNECT_TO_SERVER, e);
         }
     }
 
     private static void loginToServer(String username) {
         if (!clientState.getIsConnected()) {
-            logger.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
+            LOGGER.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
             return;
         }
         if (clientState.getIsLoggedIn()) {
-            logger.info(ErrorMessages.ALREADY_LOGGED_IN);
+            LOGGER.info(ErrorMessages.ALREADY_LOGGED_IN);
             return;
         }
         if (clientState.getIsInLoginQueue()) {
-            logger.error(ErrorMessages.IN_LOGIN_QUEUE);
+            LOGGER.error(ErrorMessages.IN_LOGIN_QUEUE);
             return;
         }
 
         Message loginRequest = new Message.Builder().withMessageType(MessageType.USER_LOGIN_REQUEST)
                 .withSenderId(username).build();
-        try {
-            objectOutputStream.writeObject(loginRequest);
-            objectOutputStream.flush();
-            clientState.setIsWaitingForResponse(true);
-            phaser.arriveAndAwaitAdvance();
-        } catch (IOException e) {
-            logger.error(e.getMessage(), e);
-        }
+        sendRequestToServer(loginRequest);
     }
 
-    public static void sendMessage(String receiverId, String message) {
+	public static void sendMessage(String receiverId, String text) {
         if (!clientState.getIsConnected()) {
-            logger.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
+            LOGGER.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
         }
         if (!clientState.getIsLoggedIn()) {
-            logger.error(ErrorMessages.NOT_LOGGED_IN);
+            LOGGER.error(ErrorMessages.NOT_LOGGED_IN);
             return;
         }
+        
+        Message textMessage = new Message.Builder().withText(text).withSenderId(clientState.getUserId())
+                .withReceiverId(receiverId).withMessageType(MessageType.SEND_TEXT_REQUEST).build();
 
-        try {
-            Message messageAsObject = new Message.Builder().withText(message).withSenderId(clientState.getUserId())
-                    .withReceiverId(receiverId).withMessageType(MessageType.SEND_TEXT_REQUEST).build();
-            objectOutputStream.writeObject(messageAsObject);
-            objectOutputStream.flush();
-            clientState.setIsWaitingForResponse(true);
-        } catch (IOException e) {
-            logger.error(e.getMessage(), e);
-        }
+        sendRequestToServer(textMessage);
     }
 
     private static void logoff() {
         if (!clientState.getIsConnected()) {
-            logger.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
+            LOGGER.error(ErrorMessages.NOT_CONNECTED_TO_SERVER);
             return;
         }
         if (!clientState.getIsLoggedIn()) {
-            logger.info(ErrorMessages.NOT_LOGGED_IN);
+            LOGGER.info(ErrorMessages.NOT_LOGGED_IN);
             return;
         }
 
         Message logoffRequest = new Message.Builder().withMessageType(MessageType.USER_LOGOFF_REQUEST)
                 .withSenderId(clientState.getUserId()).build();
-        try {
-            objectOutputStream.writeObject(logoffRequest);
+        sendRequestToServer(logoffRequest);
+    }
+    
+    private static void sendRequestToServer(Message request) {
+    	try {
+            objectOutputStream.writeObject(request);
             objectOutputStream.flush();
             clientState.setIsWaitingForResponse(true);
             phaser.arriveAndAwaitAdvance();
         } catch (IOException e) {
-            logger.error(e.getMessage(), e);
+            LOGGER.error(e.getMessage(), e);
         }
-    }
+	}
 
     private static void closeConnections() {
-        logger.warn("Closing Connections ...");
+        LOGGER.warn("Closing Connections ...");
         closeObjectInputStreamIfNotNull();
         closeObjectOutputStreamIfNotNull();
         closeSocketIfNotNull();
         phaser.arriveAndDeregister();
-        logger.info("Connections terminated successfully!\n You may close the window now!");
+        LOGGER.info("Connections terminated successfully!\n You may close the window now!");
     }
 
     private static void closeObjectOutputStreamIfNotNull() {
@@ -185,7 +199,7 @@ public class Client {
             try {
                 objectOutputStream.close();
             } catch (IOException e) {
-                logger.error("Failed to close object output stream", e);
+                LOGGER.error("Failed to close object output stream", e);
             }
     }
 
@@ -194,7 +208,7 @@ public class Client {
             try {
                 objectInputStream.close();
             } catch (IOException e) {
-                logger.error("Failed to close object input stream", e);
+                LOGGER.error("Failed to close object input stream", e);
             }
     }
 
@@ -203,7 +217,7 @@ public class Client {
             try {
                 socket.close();
             } catch (IOException e) {
-                logger.error("Failed to close socket", e);
+                LOGGER.error("Failed to close socket", e);
             }
     }
 

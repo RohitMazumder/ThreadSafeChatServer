@@ -4,6 +4,7 @@ public class ErrorMessages {
 
     public static final String INVALID_TEXT_SEND_ARGS = "Invalid arguments: The correct format is @<username> <text>";
     public static final String INVALID_LOGIN_ARGS = "Invalid arguments: The correct format is login <username>";
+    public static final String INVALID_REGISTER_ARGS = "Invalid arguments: The correct format is register <username>";
     public static final String INVALID_INPUT = "Error: Invalid input";
 
     public static final String NOT_CONNECTED_TO_SERVER = "Not connected to server socket: Run connect <hostname> <port>";
@@ -13,4 +14,5 @@ public class ErrorMessages {
     public static final String NOT_LOGGED_IN = "You are not logged into the server: Run login";
     public static final String ALREADY_LOGGED_IN = "You are already logged into the server!";
     public static final String IN_LOGIN_QUEUE = "Server is currently filled. Waiting for your turn to get logged in";
+    
 }

@@ -56,6 +56,9 @@ public class ClientListener implements Runnable {
 
     private void processMessage(Message message) {
         switch (message.getMessageType()) {
+        case REGISTRATION_RESPONSE:
+        	processRegistrationResponse(message);
+        	break;
         case LOGIN_RESPONSE:
             processLoginResponse(message);
             break;
@@ -77,7 +80,15 @@ public class ClientListener implements Runnable {
         }
     }
 
-    private void displayText(Message message) {
+    private void processRegistrationResponse(Message message) {
+    	if (message.getStatus() == Status.OK) {
+            logger.info(message.getText());
+        } else {
+            logger.error(message.getText());
+        }
+	}
+
+	private void displayText(Message message) {
         System.out.println(" > " + message.toString());
     }
 
